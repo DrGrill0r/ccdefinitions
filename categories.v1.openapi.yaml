@@ -1,0 +1,53 @@
+openapi: 3.0.0
+info:
+  title: Categories POC
+  description: >-
+    Get or set categories that have been assigned to the active categories
+    field.
+  version: '1.0.0'
+servers:
+  - url: 'http://{server}/v1'
+    variables:
+      server:
+        default: api.example.org
+paths:
+  /categories:
+    get:
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/categories'
+    post:
+      requestBody:
+        description: A request body.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/categories'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/categories'
+components:
+  schemas:
+    category:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int32
+        displayname:
+          type: string
+    categories:
+      type: array
+      items:
+        $ref: '#/components/schemas/category'
+    requestBody:
+      type: string

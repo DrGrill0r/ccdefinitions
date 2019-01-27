@@ -1,0 +1,186 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: API Gateway, Lambda, and Dynamo.
+
+Resources:
+  # Policy required for all lambda function roles.
+  BaseLambdaExecutionPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Base permissions needed by all lambda functions.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DeleteNetworkInterface
+            Resource: "*"
+
+  CategoriesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      AttributeDefinitions:
+        - AttributeName: category_id
+          AttributeType: N
+      KeySchema:
+        - AttributeName: category_id
+          KeyType: HASH
+
+  # FIXME How to hook up custom domain?
+  MyApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${AWS::StackName}-MyApiGateway"
+      Description: A description
+      FailOnWarnings: true
+      Body:
+        openapi: 3.0.0
+        info:
+          title: Categories POC
+          description: >-
+            Get or set categories that have been assigned to the active categories
+            field.
+          version: '1.0.0'
+        servers:
+          - url: 'http://{server}/v1'
+            variables:
+              server:
+                default: api.example.org
+        paths:
+          /categories:
+            get:
+              x-amazon-apigateway-integration:
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CategoriesLambda.Arn}/invocations"
+                credentials: !GetAtt MyApiGatewayRole.Arn
+                passthroughBehavior: when_no_match
+                httpMethod: GET
+                type: aws_proxy
+              operationId: getCategories
+              responses:
+                '200':
+                  description: OK
+                  content:
+                    application/json:
+                      schema:
+                        $ref: '#/components/schemas/categories'
+            post:
+              x-amazon-apigateway-integration:
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CategoriesLambda.Arn}/invocations"
+                credentials: !GetAtt MyApiGatewayRole.Arn
+                passthroughBehavior: when_no_match
+                httpMethod: POST
+                type: aws_proxy
+              operationId: postCategories
+              requestBody:
+                description: A request body.
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/categories'
+              responses:
+                '200':
+                  description: OK
+                  content:
+                    application/json:
+                      schema:
+                        $ref: '#/components/schemas/categories'
+        components:
+          schemas:
+            category:
+              type: object
+              properties:
+                id:
+                  type: integer
+                  format: int32
+                displayname:
+                  type: string
+            categories:
+              type: array
+              items:
+                $ref: '#/components/schemas/category'
+            requestBody:
+              type: string
+
+  MyApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref MyApiGateway
+      StageName: prod
+
+  MyApiGatewayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambda
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt CategoriesLambda.Arn
+
+  CategoriesLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt CategoriesLambdaRole.Arn  # TODO
+      Handler: index.handleHttpRequest
+      Runtime: nodejs8.10
+      Environment:
+        Variables:
+          CATEGORIES_DB: !Sub "arn:aws:dynamodb:${AWS::Region}:*:table/${CategoriesTable}"
+      Code:
+        ZipFile: |
+          exports.handlers = function(event, context) {}
+
+  CategoriesLambdaRole:  # -> AppAPIRole
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref BaseLambdaExecutionPolicy
+      Policies:
+        - PolicyName: getCategories
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Scan
+                  - dynamodb:BatchWriteItem
+                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:*:table/${CategoriesTable}"
+        - PolicyName: postCategories
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:BatchWriteItem
+                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:*:table/${CategoriesTable}"
